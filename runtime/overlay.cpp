@@ -36,6 +36,7 @@ static void ImGui_ImplVulkan_UpdateTexture(ImTextureData *) {}
 #include "forge.h"
 #include "menu_confirm.h"
 #include "overlay.h"
+#include "touch.h"
 #include "hle/chat.h"
 #include "settings_locale.h"
 #include "settings_panel.h"
@@ -796,12 +797,13 @@ void overlay_frame(void *cpu) {
     bool fps = config_show_fps();
 #endif
     float loading = loading_alpha(now);
+    bool touch = touch_drawn();  // (the touch controls: runtime/touch.cpp)
 #ifndef MHGU_NULL_BACKEND
     bool hdr_stats = vk_hdr_stats(&g_hdr_stats);
 #else
     bool hdr_stats = false;
 #endif
-    if (!open && !free_render && !notice && !chat && !fps && !loading && !hdr_stats) {  // (nothing to draw)
+    if (!open && !free_render && !notice && !chat && !fps && !loading && !hdr_stats && !touch) {  // (nothing to draw)
         std::lock_guard<std::mutex> l(g_snap_lock);
         if (g_snap.Valid) snap_clear();
         apply_input(io);  // (keep the queue short)
@@ -872,6 +874,7 @@ void overlay_frame(void *cpu) {
     if (fps) draw_fps(now);
     if (hdr_stats) draw_hdr_analysis(g_hdr_stats, scale);
     if (loading) draw_loading(now, scale, loading);
+    if (touch) touch_draw((float)w, (float)h);
     ImGui::Render();
 
     ImDrawData *dd = ImGui::GetDrawData();

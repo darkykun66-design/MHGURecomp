@@ -36,6 +36,7 @@
 #include "overlay.h"
 #include "rt.h"
 #include "textinput.h"
+#include "touch.h"
 
 #define B(x) (1ull << (x))
 
@@ -610,6 +611,12 @@ void host_input_event(const SDL_Event *e) {
     if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) pad_pressed(e->gbutton.which);
     mods_mouse_event(e);  // (the mouse for mods: every event, whoever takes it)
     if (overlay_event(e)) return;  // (Forge's menu open: keyboard and mouse are its)
+    if (touch_event(e)) return;  // (fingers: the touch controls, runtime/touch.cpp)
+    if (touch_active() && !overlay_menu_open() &&  // (the mouse SDL makes from a finger: the controls have it already)
+        ((e->type == SDL_EVENT_MOUSE_MOTION && e->motion.which == SDL_TOUCH_MOUSEID) ||
+         ((e->type == SDL_EVENT_MOUSE_BUTTON_DOWN || e->type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+          e->button.which == SDL_TOUCH_MOUSEID)))
+        return;
     if (chat_mouse(e)) return;  // (typing a line of chat: the mouse drags its box)
     if (textinput_event(e)) return;  // (typing into a text entry: not controller buttons)
     switch (e->type) {
@@ -676,6 +683,7 @@ void host_input_event(const SDL_Event *e) {
         break;
     }
     case SDL_EVENT_WINDOW_FOCUS_LOST:
+        touch_reset();
         memset(keys, 0, sizeof keys);
         mouse_held = 0, mouse_grab = false;
         config_window_focus(false);  // ([Audio] MuteInBackground)
@@ -695,6 +703,8 @@ void host_input_event(const SDL_Event *e) {
 }
 
 static int32_t clamp_axis(int v) { return v < -32767 ? -32767 : v > 32767 ? 32767 : v; }
+
+static uint64_t touch_cam_ns;  // when a finger last turned the camera (runtime/touch.cpp)
 
 // Capture or release the mouse as wanted, and give its movement to the hunt camera or the right stick.
 static void mouse_update(int *rx, int *ry) {
@@ -740,7 +750,7 @@ static void mouse_update(int *rx, int *ry) {
         vx += (mouse_dx / dt - vx) * a, vy += (mouse_dy / dt - vy) * a;
     }
     mouse_dx = mouse_dy = 0;
-    if (!mouse_captured && now >= test_until) vx = vy = 0;
+    if (!mouse_captured && now >= test_until && now - touch_cam_ns > 150000000ull) vx = vy = 0;
     float s = config_live_mouse_sensitivity() / MOUSE_FULL_SPEED;
     float x = vx * s, y = -vy * s;  // (the mouse's y is down, the stick's up)
     float m = sqrtf(x * x + y * y);
@@ -817,6 +827,13 @@ void host_input_update(void) {
     int k = bind_held(BIND_WALK, true) ? 16000 : 32767;
     if (kx && ky) k = k * 7071 / 10000;  // diagonals: same length as straight
     lx += kx * k, ly += ky * k;
+    {  // the touch controls: buttons, the left stick, and a drag as mouse counts for the camera
+        bool any_pad = false;
+        for (int i = 0; i < MAX_PADS; i++) any_pad |= pads[i].pad != NULL;
+        float tdx, tdy;
+        touch_input(any_pad, typing, &b, &lx, &ly, &tdx, &tdy);
+        if (tdx != 0 || tdy != 0) mouse_dx += tdx, mouse_dy += tdy, touch_cam_ns = plat_now_ns();
+    }
     mouse_update(&rx, &ry);
 
     if (pad) {
