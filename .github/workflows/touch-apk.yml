@@ -1,1 +1,77 @@
-
+# Builds libmain.so (the runtime, with the touch controls) for arm64 and puts it into the upstream release APK.
+# It needs NO game files: libmhgugame.so (the game code) stays exactly as it is in the APK you give it.
+#
+# Run it from the repo's Actions tab: "Build touch-controls APK", and paste the link of the upstream release's
+# Android-MHGURecomp.<version>.apk. The result is the "touch-apk" artifact (a zip holding the APK). Keep it to yourself:
+# the APK holds game code, so it is not for sharing or publishing.
+#
+# UNTESTED: written without being able to run it. If a step fails, the log says which; send me that log.
+name: Build touch-controls APK
+on:
+  workflow_dispatch:
+    inputs:
+      base_apk_url:
+        description: "Link to upstream's Android-MHGURecomp.<version>.apk (Releases page, right-click, copy link)"
+        required: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Android SDK pieces
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1" "build-tools;35.0.0" "platforms;android-35"
+      - name: Build libmain.so (arm64-v8a)
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build python3 > /dev/null
+          make PLATFORM=android ABI=arm64-v8a JDK="$JAVA_HOME" -j"$(nproc)" build-android/lib/arm64-v8a/libmain.so
+          ls -l build-android/lib/arm64-v8a/
+      - name: Put it into the upstream APK and sign it
+        env:
+          BASE_APK_URL: ${{ inputs.base_apk_url }}
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          NDK="$(ls -d "$ANDROID_HOME"/ndk/*/ | tail -1)"
+          STRIP="$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/llvm-strip)"
+          curl -fL "$BASE_APK_URL" -o base.apk
+          "$STRIP" --strip-debug -o libmain.stripped.so build-android/lib/arm64-v8a/libmain.so
+          python3 - <<'PY'
+          import zipfile
+          src = zipfile.ZipFile("base.apk")
+          names = src.namelist()
+          target = "lib/arm64-v8a/libmain.so"
+          assert target in names, "the base APK has no " + target + ": is it the arm64 release APK?"
+          with zipfile.ZipFile("unsigned.apk", "w") as out:
+              for info in src.infolist():
+                  if info.filename.startswith("META-INF/"):
+                      continue  # the old signature
+                  data = open("libmain.stripped.so", "rb").read() if info.filename == target else src.read(info.filename)
+                  zi = zipfile.ZipInfo(info.filename, info.date_time)
+                  zi.compress_type = info.compress_type
+                  zi.external_attr = info.external_attr
+                  out.writestr(zi, data)
+          PY
+          "$BT/zipalign" -f -P 16 4 unsigned.apk aligned.apk
+          keytool -genkeypair -keystore touch.keystore -storepass android -keypass android -alias touch \
+            -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=MHGU touch build"
+          "$BT/apksigner" sign --ks touch.keystore --ks-pass pass:android --key-pass pass:android \
+            --v4-signing-enabled false --out MHGURecomp-touch.apk aligned.apk
+          "$BT/apksigner" verify MHGURecomp-touch.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: touch-apk
+          path: MHGURecomp-touch.apk
+          retention-days: 7
+          
