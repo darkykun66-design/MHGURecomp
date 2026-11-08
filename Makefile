@@ -197,7 +197,7 @@ SHADER_ID := $(shell cat $(SHADER_SRCS) | tr -d '\r' | sha256sum | cut -c1-16)
 # release built before its tag is made.
 VERSION ?= $(shell git describe --tags 2>/dev/null || echo unknown)
 
-RT_OBJ   = $(patsubst runtime/%.c,$(O)/rt/%.o,$(RT_SRC)) $(RYUSRV_OBJ) $(RT_CXX) $(O)/rt/overlay.o $(O)/rt/settings_panel.o $(IMGUI_OBJ) \
+RT_OBJ   = $(patsubst runtime/%.c,$(O)/rt/%.o,$(RT_SRC)) $(RYUSRV_OBJ) $(RT_CXX) $(O)/rt/overlay.o $(O)/rt/touch.o $(O)/rt/settings_panel.o $(IMGUI_OBJ) \
            $(O)/updater/sha256.o $(ICON_RES) $(ENET_OBJ)
 # The Ryujinx LDN server this game can run itself (runtime/net/ryusrv/: C++)
 RYUSRV_OBJ := $(patsubst runtime/net/ryusrv/%.cpp,$(O)/rt/net/ryusrv/%.o,$(wildcard runtime/net/ryusrv/*.cpp))
@@ -342,6 +342,10 @@ $(O)/rt/forge_imgui.o: RTFLAGS += -DCIMGUI_NO_EXPORT -Wno-unused-variable
 $(O)/rt/overlay.o: runtime/overlay.cpp runtime/overlay.h runtime/forge.h
 	@mkdir -p $(dir $@)
 	$(CXX) $(IMGUIFLAGS) $(if $(filter 1,$(NULL_GPU)),-DMHGU_NULL_BACKEND) -Wall -Iruntime -c $< -o $@
+
+$(O)/rt/touch.o: runtime/touch.cpp runtime/touch.h runtime/overlay.h runtime/hle/input.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(IMGUIFLAGS) -Wall -Iruntime -c $< -o $@
 
 $(O)/rt/settings_panel.o: runtime/settings_panel.cpp runtime/settings_panel.h runtime/modorder.h runtime/config.h runtime/settings_locale.h runtime/settings_icons.h runtime/app_actions.h runtime/overlay.h runtime/net/net.h
 	@mkdir -p $(dir $@)
